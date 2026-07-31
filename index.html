@@ -691,11 +691,21 @@
     } else {
       // 非 SELECT：通用卡片
       const rows = [];
-      if (ast.table) rows.push(['表 (TABLE)', chip(esc(ast.table.table||ast.table), ast.table.as)]);
+      if (ast.table) {
+        const tblList = Array.isArray(ast.table) ? ast.table : [ast.table];
+        const tcs = tblList.map(t => {
+          const tbl = (t.db ? esc(t.db)+'.' : '') + esc(t.table||'');
+          return chip(tbl, t.as);
+        });
+        if (tcs.length) rows.push(['表 (TABLE)', '<div class="chips">'+tcs.join('')+'</div>']);
+      }
       if (ast.from) rows.push(['FROM', chip(esc((ast.from[0]&&ast.from[0].table)||''))]);
       if (ast.columns) rows.push(['列 (COLUMNS)', chip(esc(exprs(ast.columns[0])||'多列'))]);
       if (ast.where) rows.push(['WHERE', '<div class="cond-leaf">'+esc(exprs(ast.where))+'</div>']);
-      if (ast.set) rows.push(['SET', chip(esc(exprs(ast.set[0].value)||''))]);
+      if (ast.set) {
+        const setHtml = (ast.set||[]).map(s => chip(esc(exprs(s.column) + ' = ' + exprs(s.value)))).join('');
+        rows.push(['SET', '<div class="chips">'+setHtml+'</div>']);
+      }
       if (ast.values) rows.push(['VALUES', chip('('+ast.values.length+' 行)')]);
       if (!rows.length) rows.push(['', '<div class="hint">该语句类型暂未做专项可视化，请查看树形 / JSON 视图。</div>']);
       const inner = rows.map(([k,v])=>'<div style="margin:6px 0"><b style="color:var(--muted);font-size:12px">'+k+'</b><div style="margin-top:4px">'+v+'</div></div>').join('');
