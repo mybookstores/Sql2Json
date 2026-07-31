@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SQL → JSON 可视化转换器</title>
+<style>
+  :root {
+    --bg: #e9edf3;
+    --panel: #ffffff;
+    --border: #e4e8f0;
+    --border-strong: #d2d8e4;
+    --surface-2: #f5f7fb;
+    --text: #1e2532;
+    --muted: #6b7488;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --key: #2563eb;
+    --str: #16a34a;
+    --num: #ea580c;
+    --bool: #9333ea;
+    --null: #94a3b8;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 18px rgba(16,24,40,.06);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .container { display: flex; gap: 16px; padding: 16px 24px 28px; align-items: stretch; height: 100vh; }
+  @media (max-width: 980px) { .container { flex-direction: column; height: auto; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .left { flex: 1 1 46%; }
+  .right { flex: 1 1 54%; }
+
+  .panel-head {
+    display: flex; flex-direction: column; gap: 11px;
+    padding: 13px 14px; border-bottom: 1px solid var(--border);
+  }
+  .panel-head .title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; color: #334155; }
+  .panel-head .title::before { content: ""; width: 3px; height: 14px; border-radius: 2px; background: var(--accent); }
+  .toolbar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .tb-group { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  select, button {
+    font: inherit; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap;
+    border-radius: 10px; cursor: pointer;
+    transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .08s ease;
+  }
+  /* 下拉框：干净单层边框，自定义箭头，无多余外圈 */
+  select {
+    display: inline-block;
+    border: 1px solid #d2d8e4; background-color: #fff; color: var(--text);
+    padding: 7px 28px 7px 11px;
+    -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 5l3.5 3.5L10.5 5' fill='none' stroke='%239aa3b2' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+    box-shadow: inset 0 1px 2px rgba(15,23,42,.03);
+  }
+  select:hover {
+    border-color: var(--accent); color: var(--accent);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 5l3.5 3.5L10.5 5' fill='none' stroke='%234f46e5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+  /* 按钮：工具栏质感——柔和浅灰底、无边框，hover 转强调色 */
+  button {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid transparent; background: var(--surface-2); color: var(--text);
+    padding: 8px 13px; flex: none;
+  }
+  button svg { width: 16px; height: 16px; display: block; flex: none; }
+  button:hover { background: var(--accent-soft); color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(79,70,229,.22);
+  }
+  button.primary:hover { background: #4338ca; border-color: #4338ca; color: #fff; box-shadow: 0 3px 9px rgba(79,70,229,.3); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select:focus-visible { outline: none; }
+
+  /* 输入区：透明 textarea + 背后高亮层（零依赖语法高亮叠加方案） */
+  .editor { position: relative; flex: 1; min-height: 0; }
+  .sql-hl, textarea#sql {
+    margin: 0; border: 0;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 13.5px; line-height: 1.6; tab-size: 2; letter-spacing: normal;
+    padding: 14px; white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
+  }
+  .sql-hl {
+    position: absolute; inset: 0; z-index: 1; overflow: auto;
+    background: #fbfcff; color: var(--text); pointer-events: none;
+  }
+  textarea#sql {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2;
+    resize: none; outline: none; background: transparent; color: transparent; caret-color: #0f172a;
+    overflow: auto;
+  }
+  /* 输入区高亮 token 配色（与右侧 JSON 视图色系一致） */
+  .tk-kw  { color: var(--accent); font-weight: 600; }
+  .tk-str { color: var(--str); }
+  .tk-comment { color: var(--null); font-style: italic; }
+  .tk-num { color: var(--num); }
+  .tk-op  { color: var(--muted); }
+  .tk-id  { color: var(--key); }
+
+  .tabs { display: flex; gap: 4px; padding: 10px 14px 0; border-bottom: 1px solid var(--border); }
+  .tab {
+    padding: 8px 14px; cursor: pointer; border: 1px solid transparent; border-bottom: none;
+    border-radius: 8px 8px 0 0; color: var(--muted); font-weight: 500;
+  }
+  .tab.active { color: var(--accent); background: var(--accent-soft); border-color: var(--border); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+  .tab-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+
+  /* 卡片内滚动：滚动条默认隐藏，hover 容器时显示细滚动条 */
+  .editor, textarea#sql, .sql-hl, .tab-body { scrollbar-width: none; -ms-overflow-style: none; }
+  .editor:hover, textarea#sql:hover, .tab-body:hover { scrollbar-width: thin; scrollbar-color: rgba(100,116,139,.35) transparent; }
+  .editor::-webkit-scrollbar, textarea#sql::-webkit-scrollbar, .sql-hl::-webkit-scrollbar, .tab-body::-webkit-scrollbar { width: 0; height: 0; }
+  .editor:hover::-webkit-scrollbar, textarea#sql:hover::-webkit-scrollbar, .tab-body:hover::-webkit-scrollbar { width: 8px; height: 8px; }
+  .editor:hover::-webkit-scrollbar-thumb, textarea#sql:hover::-webkit-scrollbar-thumb, .tab-body:hover::-webkit-scrollbar-thumb { background: rgba(100,116,139,.35); border-radius: 4px; }
+  .view { display: none; height: 100%; }
+  .view.active { display: block; }
+
+  /* JSON text view */
+  pre#json {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6;
+    color: var(--text);
+  }
+  .j-key { color: var(--key); }
+  .j-str { color: var(--str); }
+  .j-num { color: var(--num); }
+  .j-bool { color: var(--bool); }
+  .j-null { color: var(--null); }
+  .j-punc { color: var(--muted); }
+
+  /* Tree view */
+  .tree { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+  .tree ul { list-style: none; margin: 0; padding-left: 18px; border-left: 1px dashed var(--border-strong); }
+  .tree li { margin: 1px 0; }
+  .tree .branch { display: block; }
+  .tree .branch > .toggle,
+  .tree .branch > .branch-label,
+  .tree .branch > .badge { display: inline-block; vertical-align: baseline; white-space: nowrap; }
+  .tree .branch > .children { display: block; margin-top: 1px; }
+  .tree .branch.collapsed > .children { display: none; }
+  .tree .branch.collapsed > .toggle { transform: rotate(-90deg); }
+  .tree .leaf { display: block; white-space: nowrap; }
+  .tree .leaf .val.str { white-space: normal; word-break: break-word; max-width: calc(100vw - 400px); }
+  .tree .toggle {
+    width: 14px; text-align: center; cursor: pointer; color: var(--accent);
+    user-select: none; transition: transform .12s; font-size: 11px;
+  }
+  .tree .branch-label { cursor: copy; }
+  .tree .leaf { cursor: copy; }
+  .tree .branch-label:hover .key,
+  .tree .leaf:hover .key { text-decoration: underline dotted var(--accent); }
+  .tree .badge { color: var(--null); font-size: 11px; margin-left: 4px; }
+  .tree .key { color: var(--key); cursor: inherit; }
+  .tree .colon { color: var(--muted); }
+  .tree .val.str { color: var(--str); }
+  .tree .val.num { color: var(--num); }
+  .tree .val.bool { color: var(--bool); }
+  .tree .val.null { color: var(--null); }
+
+  /* Visual view */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .stage { position: relative; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: #fff; margin-bottom: 18px; }
+  .stage::after {
+    content: ""; position: absolute; left: 26px; bottom: -18px; width: 2px; height: 18px;
+    background: linear-gradient(var(--border-strong), var(--accent));
+  }
+  .stage:last-child { margin-bottom: 0; }
+  .stage:last-child::after { display: none; }
+  .stage .stage-title {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    color: #fff; background: var(--accent); padding: 3px 10px; border-radius: 999px; margin-bottom: 10px;
+  }
+  .stage.from .stage-title { background: #0ea5e9; }
+  .stage.join .stage-title { background: #8b5cf6; }
+  .stage.where .stage-title { background: #ef4444; }
+  .stage.groupby .stage-title { background: #f59e0b; }
+  .stage.orderby .stage-title { background: #10b981; }
+  .stage.limit .stage-title { background: #64748b; }
+  .stage.having .stage-title { background: #db2777; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: #f1f5f9; border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 5px 10px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; color: #0f172a;
+  }
+  .chip .alias { color: var(--accent); margin-left: 6px; font-style: italic; }
+  .chip .star { color: var(--accent); font-weight: 700; }
+
+  /* condition tree */
+  .cond { margin: 4px 0; }
+  .cond-op {
+    display: inline-block; font-weight: 700; font-size: 11px; letter-spacing: .5px;
+    padding: 2px 8px; border-radius: 6px; margin: 4px 0;
+  }
+  .cond-AND > .cond-op { background: #fee2e2; color: #b91c1c; }
+  .cond-OR > .cond-op { background: #fef3c7; color: #b45309; }
+  .cond-children { padding-left: 16px; border-left: 2px solid var(--border-strong); margin-left: 6px; }
+  .cond-leaf {
+    background: #f8fafc; border: 1px solid var(--border); border-left: 3px solid #ef4444;
+    border-radius: 6px; padding: 6px 10px; margin: 4px 0;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; color: #0f172a;
+  }
+
+  /* 列 -> 值 布局（INSERT 可视化用） */
+  .kv { display: flex; gap: 16px; padding: 10px 0; border-bottom: 1px dashed var(--border); align-items: flex-start; }
+  .kv:last-child { border-bottom: none; }
+  .kv-k { flex: 0 0 170px; font-weight: 600; color: var(--accent); font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; padding-top: 2px; }
+  .kv-v { flex: 1; min-width: 0; line-height: 1.65; }
+  .kv-v > .chip { display: inline-block; line-height: 1.65; padding: 8px 12px; }
+  .json-mini { margin: 2px 0; }
+
+  .error {
+    background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+    padding: 12px 14px; border-radius: 10px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
+  .meta { font-size: 12px; color: var(--muted); padding: 6px 14px; border-top: 1px solid var(--border); display:flex; justify-content: space-between;}
+  .hint { color: var(--muted); font-size: 12px; }
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #111827; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: .25s; z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  code.inline { background: #eef2ff; color: var(--accent); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+
+  /* SQL 解释视图 */
+  .explain-summary {
+    background: var(--accent-soft); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    padding: 12px 14px; border-radius: 10px; font-size: 13.5px; line-height: 1.7; color: #0f172a; margin-bottom: 12px;
+  }
+  .explain-list { display: flex; flex-direction: column; gap: 2px; }
+  .explain-row {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 9px 4px; border-bottom: 1px dashed var(--border);
+  }
+  .explain-row:last-child { border-bottom: none; }
+  .explain-label {
+    flex: none; width: 130px; text-align: right; color: var(--accent); font-weight: 600;
+    font-size: 12.5px; letter-spacing: .3px; white-space: nowrap;
+  }
+  .explain-text {
+    flex: 1; font-size: 13px; line-height: 1.65; color: var(--text);
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; word-break: break-word;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- 左侧：SQL / JSON 输入 -->
+  <section class="panel left">
+    <div class="panel-head">
+      <span class="title">SQL / JSON 输入</span>
+      <div class="toolbar">
+        <div class="tb-group">
+          <select id="dialect" title="SQL 方言">
+            <option value="auto">方言：自动</option>
+            <option value="mysql" selected>MySQL</option>
+            <option value="postgresql">PostgreSQL</option>
+            <option value="sqlite">SQLite</option>
+            <option value="mariadb">MariaDB</option>
+            <option value="transactsql">SQL Server</option>
+            <option value="bigquery">BigQuery</option>
+          </select>
+          <select id="sample" title="示例">
+            <option value="">载入示例…</option>
+          </select>
+        </div>
+        <div class="tb-group">
+          <button id="btn-format" class="ghost" title="重新格式化 SQL">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h7M3 12h10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            格式化
+          </button>
+          <button id="btn-clear" class="ghost" title="清空">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4.5h8M6.5 4.5V3.5h3v1M5 4.5l.5 8h5l.5-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            清空
+          </button>
+          <button id="btn-convert" class="primary">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3l8 5-8 5V3z" fill="currentColor"/></svg>
+            转换
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="editor">
+      <pre class="sql-hl" id="sql-hl" aria-hidden="true"></pre>
+      <textarea id="sql" spellcheck="false" placeholder="在此粘贴 SQL，或纯 JSON 对象 / 数组（数组元素亦支持 JSON 字符串）&#10;SELECT id, name, age FROM users WHERE age > 18 ORDER BY name LIMIT 10;"></textarea>
+    </div>
+    <div class="meta">
+      <span id="sql-stat" class="hint">0 字符</span>
+      <span id="dialect-hint" class="hint">当前方言：MySQL</span>
+    </div>
+  </section>
+
+  <!-- 右侧：输出 -->
+  <section class="panel right">
+    <div class="panel-head">
+      <span class="title">解析结果</span>
+      <div class="toolbar">
+        <button id="btn-copy" class="ghost">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5H5.5C4.7 2.5 4 3.2 4 4v6.5h1.5V4h5V2.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M11.5 5H6.5C5.7 5 5 5.7 5 6.5v6.5C5 13.8 5.7 14.5 6.5 14.5H11.5C12.3 14.5 13 13.8 13 13V6.5C13 5.7 12.3 5 11.5 5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          复制 JSON
+        </button>
+        <button id="btn-download" class="ghost">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v6M8 8.5L5.8 6.3M8 8.5l2.2-2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 10.5V12c0 .8.7 1.5 1.5 1.5h6c.8 0 1.5-.7 1.5-1.5v-1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          下载 .json
+        </button>
+        <button id="btn-download-structure" class="ghost">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3l5 2-5 2-5-2 5-2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M3 8l5 2 5-2M3 11l5 2 5-2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          下载结构 JSON
+        </button>
+        <button id="btn-expand" class="ghost">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 5l4-3 4 3M4 11l4 3 4-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          展开/收起
+        </button>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab active" data-view="json">JSON 文本</div>
+      <div class="tab" data-view="tree">树形视图</div>
+      <div class="tab" data-view="visual">结构可视化</div>
+      <div class="tab" data-view="explain">SQL / JSON 解释</div>
+    </div>
+    <div class="tab-body">
+      <div class="view active" id="view-json"><div class="empty">转换后在此查看格式化的 JSON 文本。</div></div>
+      <div class="view" id="view-tree"><div class="empty">转换后在此查看可折叠的 JSON 树。</div></div>
+      <div class="view" id="view-visual"><div class="empty">转换后在此查看 SQL 结构可视化图。</div></div>
+      <div class="view" id="view-explain"><div class="empty">转换后在此查看 SQL / JSON 的自然语言解释。</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="./assets/sql-parser.js"></script>
+<script>
+(function(){
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const parser = new NodeSQLParser.Parser();
+  const dialectSel = $("#dialect");
+  const sampleSel = $("#sample");
+  const sqlEl = $("#sql");
+  const sqlHl = $("#sql-hl");
+
+  let lastAst = null;
+  let lastJson = "";
+  let nodeStore = [];   // 树形视图节点值注册表：点击节点时据 id 取出并序列化为 JSON 复制
+  let lastRawAst = null;   // 原始 AST（未剥离 type），用于反向生成 SQL 与统计摘要
+
+  // ---------- 工具 ----------
+  function esc(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function toast(msg){
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 1600);
+  }
+  // 复制节点（含其全部子节点）为「"键": 值」形式的 JSON 文本；根节点无键则只复制值本身
+  async function copyNodeJson(entry){
+    if (!entry) return;
+    const { k, v } = entry;
+    let text;
+    if (k === undefined || k === null){
+      text = JSON.stringify(v, null, 2);          // 根节点：仅值
+    } else {
+      const keyJson = (typeof k === "number") ? JSON.stringify(String(k)) : JSON.stringify(k);
+      const valJson = JSON.stringify(v, null, 2);
+      const lines = valJson.split("\n");
+      // 多行（对象/数组）时把值整体缩进一级，与键对齐；单行（标量）直接同行
+      text = (lines.length === 1)
+        ? keyJson + ": " + valJson
+        : keyJson + ": " + lines[0] + "\n" + lines.slice(1).map(l => "  " + l).join("\n");
+    }
+    try { await navigator.clipboard.writeText(text); toast("已复制节点 JSON（" + text.length + " 字符）"); }
+    catch(e){
+      const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand("copy"); toast("已复制节点 JSON（" + text.length + " 字符）"); }catch(_){ toast("复制失败"); }
+      document.body.removeChild(ta);
+    }
+  }
+  function exprs(node){
+    try { return parser.exprToSQL(node); } catch(e){ return JSON.stringify(node); }
+  }
+  // 尝试把字符串当作 JSON 解析（仅对象/数组才视为可展开）
+  function tryJson(str){
+    if (typeof str !== "string") return null;
+    const s = str.trim();
+    const c = s.charAt(0);
+    if (c !== "{" && c !== "[") return null;
+    try { const v = JSON.parse(s); return (v && typeof v === "object") ? v : null; }
+    catch(e){ return null; }
+  }
+  // 递归把 AST 里所有「字符串内嵌 JSON」解析为真实对象/数组（用于结构 JSON 导出）
+  function deepParse(node){
+    if (Array.isArray(node)) return node.map(deepParse);
+    if (node && typeof node === "object"){
+      const out = {};
+      for (const k of Object.keys(node)) out[k] = deepParse(node[k]);
+      return out;
+    }
+    if (typeof node === "string"){
+      const p = tryJson(node);
+      if (p !== null) return deepParse(p);
+      return node;
+    }
+    return node;
+  }
+  // 递归剔除所有 type 键（解析器内部元字段，如 column_ref / binary_expr / select）。
+  // 仅用于 SQL AST（SELECT/UPDATE 等）展示，避免与树形视图不一致；
+  // INSERT / 纯 JSON 中的 type 是真实业务字段，绝不能调用本函数。
+  function stripType(node){
+    if (Array.isArray(node)) return node.map(stripType);
+    if (node && typeof node === "object"){
+      const out = {};
+      for (const k of Object.keys(node)){
+        if (k === "type") continue;
+        out[k] = stripType(node[k]);
+      }
+      return out;
+    }
+    return node;
+  }
+  // 把 INSERT 的「列 -> 值」映射还原成逻辑对象：列名作为 key，JSON 字符串递归解析为真实结构
+  function parseJsonDeep(v){
+    if (typeof v !== "string") return v;
+    const p = tryJson(v);
+    if (p === null) return v;
+    if (Array.isArray(p)) return p.map(parseJsonDeep);
+    if (p && typeof p === "object"){
+      const out = {};
+      for (const k of Object.keys(p)) out[k] = parseJsonDeep(p[k]);
+      return out;
+    }
+    return p;
+  }
+  function insertToObject(ast){
+    const cols = ast.columns || [];
+    const rows = (ast.values && ast.values.values) || [];
+    const buildRow = (row) => {
+      const vals = (row && row.value) || [];
+      const obj = {};
+      cols.forEach((c, ci) => {
+        const node = vals[ci];
+        let raw = (node && node.value != null) ? node.value : "";
+        if (typeof raw !== "string") raw = String(raw);
+        obj[c] = parseJsonDeep(raw);
+      });
+      return obj;
+    };
+    if (rows.length <= 1) return buildRow(rows[0] || {value: []});
+    return rows.map(buildRow);
+  }
+
+  // ---------- JSON 语法高亮（纯文本视图）----------
+  function highlight(json){
+    json = esc(json);
+    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)/g, function(match){
+      let cls = "j-num";
+      if (/^"/.test(match)) { cls = /:$/.test(match) ? "j-key" : "j-str"; }
+      else if (/true|false/.test(match)) cls = "j-bool";
+      else if (/null/.test(match)) cls = "j-null";
+      return '<span class="' + cls + '">' + match + '</span>';
+    });
+  }
+
+  // 输入区 SQL 语法高亮（叠加层用，零依赖 tokenizer）
+  const SQL_KW = new Set(("SELECT FROM WHERE AND OR NOT IN LIKE BETWEEN IS NULL NOTNULL AS JOIN INNER LEFT RIGHT OUTER FULL CROSS ON USING GROUP BY ORDER HAVING LIMIT OFFSET DISTINCT UNION ALL INTERSECT EXCEPT INSERT INTO VALUES UPDATE SET DELETE CREATE TABLE VIEW INDEX ALTER DROP TRUNCATE WITH CASE WHEN THEN ELSE END CAST EXISTS ASC DESC").split(/\s+/));
+  function highlightSql(sql){
+    const e = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const re = /(--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|(`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|([^\sA-Za-z0-9_])/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(sql))){
+      if (m.index > last) out += e(sql.slice(last, m.index));
+      const tok = m[0];
+      if (m[1]) out += '<span class="tk-comment">'+e(tok)+'</span>';
+      else if (m[2]) out += '<span class="tk-str">'+e(tok)+'</span>';
+      else if (m[3]) out += '<span class="tk-id">'+e(tok)+'</span>';
+      else if (m[4]) out += '<span class="tk-num">'+e(tok)+'</span>';
+      else if (m[5]) out += SQL_KW.has(tok.toUpperCase()) ? '<span class="tk-kw">'+e(tok)+'</span>' : e(tok);
+      else if (m[6]) out += e(tok);                          // 空白
+      else out += '<span class="tk-op">'+e(tok)+'</span>';    // 标点 / 运算符
+      last = m.index + tok.length;
+    }
+    if (last < sql.length) out += e(sql.slice(last));
+    return out + "\n";   // 末尾补换行，避免与 textarea 末行高度不一致导致错位
+  }
+  // 输入区高亮：SQL 用 SQL tokenizer；以 { 或 [ 开头视为纯 JSON，复用右侧高亮逻辑
+  function updateInputHighlight(){
+    const sql = sqlEl.value;
+    const c = sql.trim().charAt(0);
+    sqlHl.innerHTML = (c === "{" || c === "[") ? highlight(sql) : highlightSql(sql);
+  }
+
+  // ---------- 树形视图 ----------
+  function vclass(v){
+    if (v === null) return "null";
+    const t = typeof v;
+    if (t === "number") return "num";
+    if (t === "boolean") return "bool";
+    if (t === "string") return "str";
+    return "";
+  }
+  function vhtml(v){
+    if (v === null) return "null";
+    const t = typeof v;
+    if (t === "string") return '"' + esc(v) + '"';
+    return esc(String(v));
+  }
+  // 把节点（键 + 值）存入注册表，返回序号；点击时据序号取出并序列化为「"键": 值」形式的 JSON 复制
+  function regNode(key, val){
+    const id = nodeStore.push({ k: key, v: val }) - 1;
+    return id;
+  }
+  function entriesInner(value, filterType){
+    if (filterType === undefined) filterType = true;
+    const isArr = Array.isArray(value);
+    const entries = isArr ? value.map((v,i)=>[i,v]) : Object.keys(value).filter(k=> !(filterType && k==='type')).map(k=>[k, value[k]]);
+    return entries.map(([k,v])=>{
+      const lab = isArr
+        ? '<span class="key" title="点击复制节点 JSON">'+esc(String(k))+'</span>'
+        : '<span class="key" title="点击复制节点 JSON">"'+esc(String(k))+'"</span>';
+      return '<li>' + treeNode(v, lab, filterType, k) + '</li>';
+    }).join("");
+  }
+  // 字符串内嵌 JSON -> 渲染为可折叠子树（点击复制时取解析后的对象，而非原始字符串）
+  function jsonBranch(parsed, labelHtml, filterType, key){
+    if (filterType === undefined) filterType = true;
+    const cnt = Array.isArray(parsed) ? parsed.length : Object.keys(parsed).length;
+    const collapsed = cnt > 30 ? " collapsed" : "";   // 大 JSON 默认收起，避免刷屏
+    const id = regNode(key, parsed);
+    return '<div class="branch'+collapsed+'" data-node="'+id+'"><span class="toggle">▾</span>' +
+      '<span class="branch-label">' + labelHtml + '</span>' +
+      '<span class="badge">JSON</span>' +
+      '<ul class="children">' + entriesInner(parsed, filterType) + '</ul></div>';
+  }
+  function treeNode(value, labelHtml, filterType, key){
+    if (filterType === undefined) filterType = true;
+    const isObj = value && typeof value === "object";
+    if (!isObj){
+      if (typeof value === "string"){
+        const parsed = tryJson(value);
+        if (parsed !== null) return jsonBranch(parsed, labelHtml, filterType, key);
+      }
+      const id = regNode(key, value);
+      return '<div class="leaf" data-node="'+id+'">' + labelHtml +
+        '<span class="colon">: </span>' +
+        '<span class="val ' + vclass(value) + '">' + vhtml(value) + '</span></div>';
+    }
+    const isArr = Array.isArray(value);
+    if (isArr){
+      const badge = value.length + ' items';
+      const id = regNode(key, value);
+      return '<div class="branch" data-node="'+id+'"><span class="toggle">▾</span>' +
+        '<span class="branch-label">' + labelHtml + '</span>' +
+        '<span class="badge">' + badge + '</span>' +
+        '<ul class="children">' + entriesInner(value, filterType) + '</ul></div>';
+    }
+    // 对象：过滤掉解析器的内部元字段 type（如 single_quote_string / column_ref）；逻辑对象/纯 JSON 的 type 为真实字段，保留
+    const keys = Object.keys(value).filter(k => !(filterType && k === 'type'));
+    if (keys.length === 0){
+      // 只剩 type 字段的对象，直接显示其值
+      const id = regNode(key, value);
+      return '<div class="leaf" data-node="'+id+'">' + labelHtml +
+        '<span class="colon">: </span>' +
+        '<span class="val ' + vclass(value.type) + '">' + vhtml(value.type) + '</span></div>';
+    }
+    const badge = keys.length + ' keys';
+    const id = regNode(key, value);
+    return '<div class="branch" data-node="'+id+'"><span class="toggle">▾</span>' +
+      '<span class="branch-label">' + labelHtml + '</span>' +
+      '<span class="badge">' + badge + '</span>' +
+      '<ul class="children">' + entriesInner(value, filterType) + '</ul></div>';
+  }
+  function renderTree(ast, filterType){
+    nodeStore = [];   // 重置注册表（注意：结构可视化内的迷你树也会追加到同一注册表，id 全局唯一）
+    const rootLabel = '<span class="key" title="点击复制节点 JSON">root</span>';
+    return '<div class="tree">' + treeNode(ast, rootLabel, filterType) + '</div>';
+  }
+
+  // ---------- 结构可视化 ----------
+  function chip(text, alias){
+    const a = alias ? '<span class="alias">'+esc(alias)+'</span>' : '';
+    return '<span class="chip">'+text+a+'</span>';
+  }
+  function describeWhere(node){
+    if (!node) return '';
+    if (node.type === 'binary_expr' && (node.operator === 'AND' || node.operator === 'OR')){
+      const op = node.operator;
+      return '<div class="cond cond-'+op+'">' +
+        '<div class="cond-op">'+op+'</div>' +
+        '<div class="cond-children">' + describeWhere(node.left) + describeWhere(node.right) + '</div></div>';
+    }
+    return '<div class="cond-leaf">'+esc(exprs(node))+'</div>';
+  }
+  function stage(cls, title, innerHtml){
+    return '<div class="stage '+cls+'"><span class="stage-title">'+title+'</span>'+(innerHtml||'')+'</div>';
+  }
+
+  function visualOne(ast){
+    if (!ast || typeof ast !== 'object') return '<div class="empty">无法识别的语句结构。</div>';
+    const type = (ast.type || '').toUpperCase();
+    const flow = [];
+
+    if (ast.type === 'select'){
+      // SELECT 列
+      const cols = (ast.columns||[]).map(c=>{
+        let expr;
+        if (c.expr && c.expr.type === 'star') expr = '<span class="star">*</span>';
+        else expr = esc(exprs(c.expr));
+        return chip(expr, c.as);
+      });
+      flow.push(stage('select', 'SELECT · 输出列 ('+cols.length+')', '<div class="chips">'+cols.join('')+'</div>'));
+
+      // FROM（主表）+ JOIN（关联表）都来自 ast.from；JOIN 项带有 join/on 字段
+      const fromItems = ast.from || [];
+      const mainTables = fromItems.filter(f => !f.join);
+      const joins = fromItems.filter(f => f.join);
+
+      const froms = mainTables.map(f=>{
+        const tbl = (f.db ? esc(f.db)+'.' : '') + esc(f.table||'');
+        return chip(tbl, f.as);
+      });
+      if (froms.length) flow.push(stage('from', 'FROM · 主表 ('+mainTables.length+')', '<div class="chips">'+froms.join('')+'</div>'));
+
+      if (joins.length){
+        const joinHtml = joins.map(j=>{
+          const jt = (j.join || 'JOIN').toUpperCase();
+          const tbl = (j.db ? esc(j.db)+'.' : '') + esc(j.table||'');
+          const on = j.on ? describeWhere(j.on) : '';
+          return '<div style="margin-bottom:8px"><div class="chips">'+chip('<b>'+esc(jt)+'</b> '+tbl, j.as)+'</div>'
+            + (on ? '<div style="margin-left:8px;margin-top:4px">'+on+'</div>' : '') + '</div>';
+        }).join('');
+        flow.push(stage('join', 'JOIN · 关联表 ('+joins.length+')', joinHtml));
+      }
+
+      // WHERE
+      if (ast.where){
+        flow.push(stage('where', 'WHERE · 过滤条件', describeWhere(ast.where)));
+      }
+
+      // GROUP BY
+      if (ast.groupby && ast.groupby.columns && ast.groupby.columns.length){
+        const g = ast.groupby.columns.map(c=>chip(esc(exprs(c))));
+        const extra = [];
+        if (ast.groupby.rollup) extra.push('ROLLUP');
+        if (ast.groupby.cube) extra.push('CUBE');
+        flow.push(stage('groupby', 'GROUP BY · 分组'+(extra.length?' ('+extra.join(',')+')':''), '<div class="chips">'+g.join('')+'</div>'));
+      }
+
+      // HAVING
+      if (ast.having){
+        flow.push(stage('having', 'HAVING · 分组后过滤', '<div class="cond-leaf">'+esc(exprs(ast.having))+'</div>'));
+      }
+
+      // ORDER BY
+      if (ast.orderby && ast.orderby.length){
+        const o = ast.orderby.map(o=>chip(esc(exprs(o.expr)), o.type?o.type.toUpperCase():null));
+        flow.push(stage('orderby', 'ORDER BY · 排序', '<div class="chips">'+o.join('')+'</div>'));
+      }
+
+      // LIMIT
+      if (ast.limit){
+        let lim = ast.limit.value != null ? esc(exprs(ast.limit.value)) : '';
+        if (ast.limit.offset != null) lim += ' OFFSET ' + esc(exprs(ast.limit.offset));
+        flow.push(stage('limit', 'LIMIT · 限制', '<div class="chips">'+chip(lim)+'</div>'));
+      }
+    } else if (ast.type === 'insert') {
+      return visualInsert(ast);
+    } else {
+      // 非 SELECT：通用卡片
+      const rows = [];
+      if (ast.table) rows.push(['表 (TABLE)', chip(esc(ast.table.table||ast.table), ast.table.as)]);
+      if (ast.from) rows.push(['FROM', chip(esc((ast.from[0]&&ast.from[0].table)||''))]);
+      if (ast.columns) rows.push(['列 (COLUMNS)', chip(esc(exprs(ast.columns[0])||'多列'))]);
+      if (ast.where) rows.push(['WHERE', '<div class="cond-leaf">'+esc(exprs(ast.where))+'</div>']);
+      if (ast.set) rows.push(['SET', chip(esc(exprs(ast.set[0].value)||''))]);
+      if (ast.values) rows.push(['VALUES', chip('('+ast.values.length+' 行)')]);
+      if (!rows.length) rows.push(['', '<div class="hint">该语句类型暂未做专项可视化，请查看树形 / JSON 视图。</div>']);
+      const inner = rows.map(([k,v])=>'<div style="margin:6px 0"><b style="color:var(--muted);font-size:12px">'+k+'</b><div style="margin-top:4px">'+v+'</div></div>').join('');
+      flow.push(stage('select', type + ' · 语句', inner));
+    }
+
+    return '<div class="flow">' + flow.join('') + '</div>';
+  }
+  function renderVisual(ast, isJson){
+    if (isJson) return visualJson(ast);
+    if (Array.isArray(ast)) return ast.map((a,i)=> visualOne(a) + (i<ast.length-1?'<hr style="border:none;border-top:1px dashed var(--border-strong);margin:18px 0">' : '')).join('');
+    return visualOne(ast);
+  }
+  // 纯 JSON 对象 / 数组的可视化（键 -> 值，内嵌 JSON 自动展开）
+  function valCell(value){
+    const isObj = value && typeof value === "object";
+    if (isObj) return '<div class="tree json-mini"><ul class="children">'+entriesInner(value, false)+'</ul></div>';
+    return chip(esc(value === undefined ? "" : String(value)));
+  }
+  function visualJson(node){
+    if (Array.isArray(node)){
+      if (!node.length) return '<div class="empty">空数组</div>';
+      const kv = node.map((v,i)=> '<div class="kv"><div class="kv-k">['+i+']</div><div class="kv-v">'+valCell(v)+'</div></div>').join("");
+      return '<div class="flow">'+ stage("select", "ARRAY · 数组 ("+node.length+" 项)", kv) +'</div>';
+    }
+    if (node && typeof node === "object"){
+      const keys = Object.keys(node);
+      if (!keys.length) return '<div class="empty">空对象</div>';
+      const kv = keys.map(k=> '<div class="kv"><div class="kv-k">'+esc(k)+'</div><div class="kv-v">'+valCell(node[k])+'</div></div>').join("");
+      return '<div class="flow">'+ stage("select", "OBJECT · 对象 ("+keys.length+" 键)", kv) +'</div>';
+    }
+    return '<div class="flow">'+ stage("select", "VALUE", valCell(node)) +'</div>';
+  }
+  // INSERT 专项可视化：列 -> 值，JSON 字符串自动展开
+  function visualInsert(ast){
+    const t = ast.table && ast.table[0];
+    const tbl = t ? ((t.db ? esc(t.db)+'.' : '') + esc(t.table)) : '';
+    const cols = ast.columns || [];
+    const rows = (ast.values && ast.values.values) || [];
+    const blocks = [];
+    blocks.push(stage('select', 'INSERT INTO · 目标表', '<div class="chips">'+chip(tbl)+'</div>'));
+    rows.forEach((row, ri)=>{
+      const vals = (row.value || []);
+      const kv = cols.map((c, ci)=>{
+        const node = vals[ci];
+        const raw = (node && node.value != null) ? String(node.value) : '';
+        const parsed = tryJson(raw);
+        const valHtml = parsed !== null
+          ? '<div class="tree json-mini"><ul class="children">'+entriesInner(parsed, false)+'</ul></div>'
+          : chip(esc(raw));
+        return '<div class="kv"><div class="kv-k">'+esc(c)+'</div><div class="kv-v">'+valHtml+'</div></div>';
+      }).join('');
+      blocks.push(stage('from', 'VALUES · 第 '+(ri+1)+' 行（'+cols.length+' 列）', kv));
+    });
+    return '<div class="flow">'+blocks.join('')+'</div>';
+  }
+
+  // ---------- SQL 自然语言解释（规则化，不调用大模型 API） ----------
+  // 复用解析器的 exprToSQL 把任意表达式节点转回可读文本；解释视图里去掉反引号让文字更自然
+  function explainSql(ast){
+    if (!ast || typeof ast !== "object") return '<div class="empty">无可解释的内容。</div>';
+    const type = (ast.type || '').toLowerCase();
+    // 仅当 type 为已知 SQL 动词时才按 SQL 解释；否则（含 type:"api" 这类真实业务字段）一律按 JSON 结构处理
+    const SQL_TYPES = new Set(['select','insert','update','delete','replace','create','drop','alter','truncate','merge','call','set','show','use','grant','revoke']);
+    const isSql = SQL_TYPES.has(type);
+    const clauses = [];
+    let summary = '';
+    const ex = (n) => String(exprs(n) || '').replace(/`/g, '');   // exprToSQL 转文本并去反引号
+    const ref = (f) => {
+      if (!f) return '';
+      const t = (f.db ? f.db + '.' : '') + (f.table || '');
+      return f.as ? t + '（别名 ' + f.as + '）' : t;
+    };
+    const valText = (node) => (node && typeof node === 'object' && node.type) ? ex(node) : (node == null ? '' : String(node));
+
+    if (isSql && type === 'select'){
+      const cols = (ast.columns || []).map(c=>{
+        if (c.expr && c.expr.type === 'star') return '*';
+        let e = ex(c.expr);
+        if (c.as) e += '（别名 ' + c.as + '）';
+        return e;
+      });
+      const fromItems = ast.from || [];
+      const main = fromItems.filter(f=>!f.join);
+      const joins = fromItems.filter(f=>f.join);
+      summary = '这是一条查询语句：从 ' + (main.map(ref).join('、') || '未指定表') + ' 取数'
+        + (joins.length ? '，并关联 ' + joins.map(ref).join('、') : '')
+        + '，返回 ' + (cols.indexOf('*') >= 0 ? '全部列' : cols.length + ' 个字段') + '。';
+      clauses.push(['返回列', cols.indexOf('*') >= 0 ? '全部列（*）' : cols.join('、')]);
+      clauses.push(['主表', main.length ? main.map(ref).join('、') : '—']);
+      joins.forEach(j=>{
+        const on = j.on ? ex(j.on) : '';
+        clauses.push([(j.join || 'JOIN').toUpperCase() + ' 关联', ref(j) + (on ? '，连接条件：' + on : '')]);
+      });
+      if (ast.where) clauses.push(['筛选条件', ex(ast.where)]);
+      if (ast.groupby) clauses.push(['分组', ast.groupby.columns.map(c=>ex(c)).join('、')]);
+      if (ast.having) clauses.push(['分组后筛选', ex(ast.having)]);
+      if (ast.orderby) clauses.push(['排序', ast.orderby.map(o=>ex(o.expr) + (o.type ? ' ' + o.type : '')).join('、')]);
+      if (ast.limit && ast.limit.value && ast.limit.value.length){
+        const lv = ast.limit.value;
+        const off = lv.length > 1 ? valText(lv[1]) : '';
+        clauses.push(['结果数量', '最多 ' + valText(lv[0]) + ' 行' + (off ? '（跳过前 ' + off + ' 行）' : '')]);
+      }
+      if (ast.distinct) clauses.push(['去重', '使用 DISTINCT 去除重复行']);
+    }
+    else if (isSql && type === 'insert'){
+      const t = ref(ast.table && ast.table[0] ? ast.table[0] : ast.table);
+      const colNames = (ast.columns || []).map(c => (c && typeof c === 'object') ? ex(c) : String(c));
+      const rows = ast.values && ast.values.values ? ast.values.values : [];
+      summary = '这是一条插入语句：向表 ' + t + ' 插入 ' + rows.length + ' 行'
+        + (colNames.length ? '，目标字段为 ' + colNames.join('、') : '（全部字段）') + '。';
+      clauses.push(['操作', '向表 ' + t + ' 新增记录']);
+      clauses.push(['目标字段', colNames.length ? colNames.join('、') : '（未显式指定，使用全部字段）']);
+      clauses.push(['插入行数', rows.length + ' 行']);
+      if (rows.length){
+        const first = rows[0].value.map(v=>valText(v)).join('、');
+        clauses.push(['示例值（第 1 行）', first]);
+      }
+    }
+    else if (isSql && type === 'update'){
+      const t = ref(ast.table && ast.table[0] ? ast.table[0] : ast.table);
+      const sets = (ast.set || []).map(s => ex(s.column) + ' = ' + valText(s.value)).join('，');
+      summary = '这是一条更新语句：修改表 ' + t + ' 中' + (ast.where ? '符合条件的记录' : '全部记录') + '。';
+      clauses.push(['操作', '更新表 ' + t + ' 中的记录']);
+      clauses.push(['赋值', sets]);
+      if (ast.where) clauses.push(['筛选条件', ex(ast.where)]);
+      else clauses.push(['注意', '未指定 WHERE，将更新全部记录！']);
+    }
+    else if (isSql && type === 'delete'){
+      const t = ref(ast.table && ast.table[0] ? ast.table[0] : ast.table);
+      summary = '这是一条删除语句：从表 ' + t + ' 删除' + (ast.where ? '符合条件的记录' : '全部记录') + '。';
+      clauses.push(['操作', '删除表 ' + t + ' 中的记录']);
+      if (ast.where) clauses.push(['筛选条件', ex(ast.where)]);
+      else clauses.push(['注意', '未指定 WHERE，将删除全部记录！']);
+    }
+    else {
+      // JSON 对象（含 type:"api" 这类真实业务字段）/ 数组 / 未知语句：给出结构概要
+      const isArr = Array.isArray(ast);
+      const keys = isArr ? null : Object.keys(ast);
+      summary = '这是一个 ' + (isArr ? 'JSON 数组' : 'JSON 对象')
+        + (keys ? '，含 ' + keys.length + ' 个顶层字段。' : '（' + ast.length + ' 个元素）。');
+      clauses.push(['类型', isArr ? '数组' : '对象' + (type ? ' · 含 type=' + type : '')]);
+      if (keys){
+        const preview = keys.slice(0, 12).map(k=>{
+          const v = ast[k];
+          const vt = Array.isArray(v) ? '数组[' + v.length + ']' : (v && typeof v === 'object' ? '对象' : typeof v);
+          return k + '（' + vt + '）';
+        }).join('、');
+        clauses.push(['顶层字段', preview]);
+      }
+    }
+
+    let html = '';
+    if (summary) html += '<div class="explain-summary">' + esc(summary) + '</div>';
+    html += '<div class="explain-list">';
+    clauses.forEach(([label, text])=>{
+      html += '<div class="explain-row"><span class="explain-label">' + esc(label) + '</span>'
+            + '<span class="explain-text">' + esc(text) + '</span></div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // ---------- 转换 ----------
+  function convert(){
+    const sql = sqlEl.value.trim();
+    if (!sql){ clearViews(); return; }
+    // 纯 JSON 对象 / 数组：直接解析为逻辑对象（type 为真实字段，不过滤）
+    const first = sql.charAt(0);
+    if (first === '{' || first === '['){
+      try {
+        const parsed = JSON.parse(sql);
+        const ast = deepParse(parsed);
+        lastAst = ast;
+        lastRawAst = ast;
+        lastJson = JSON.stringify(ast, null, 2);
+        $("#view-tree").innerHTML = renderTree(ast, false);
+        $("#view-json").innerHTML = '<pre id="json">'+highlight(lastJson)+'</pre>';
+        $("#view-visual").innerHTML = renderVisual(ast, true);
+        $("#view-explain").innerHTML = explainSql(ast);
+        return;
+      } catch(e){ /* 解析失败则回退到 SQL 解析 */ }
+    }
+    const opt = {};
+    if (dialectSel.value !== 'auto') opt.database = dialectSel.value;
+    try {
+      let ast = parser.astify(sql, opt);
+      if (Array.isArray(ast) && ast.length === 1) ast = ast[0];
+      // INSERT：树形/JSON 视图用「列名 -> 值」逻辑对象（内嵌 JSON 递归解析，type 为真实字段保留）；
+      // 结构可视化用「列 -> 值」卡片布局（visualInsert，与对象树区分开）
+      if (ast.type === 'insert'){
+        const viewAst = insertToObject(ast);
+        lastAst = viewAst;
+        lastRawAst = ast;
+        lastJson = JSON.stringify(viewAst, null, 2);
+        $("#view-tree").innerHTML = renderTree(viewAst, false);
+        $("#view-json").innerHTML = '<pre id="json">'+highlight(lastJson)+'</pre>';
+        $("#view-visual").innerHTML = visualInsert(ast);
+        $("#view-explain").innerHTML = explainSql(ast);
+        return;
+      }
+      // 其余语句：剔除解析器内部 type 元字段，使树形 / JSON 文本一致（均无 type 噪声）
+      // 注意：结构可视化 renderVisual 必须用原始 ast（保留 type），因为 visualOne/describeWhere 依赖 type 判断语义
+      const cleanAst = stripType(ast);
+      lastAst = cleanAst;
+      lastRawAst = ast;
+      lastJson = JSON.stringify(cleanAst, null, 2);
+      $("#view-tree").innerHTML = renderTree(cleanAst, true);
+      $("#view-json").innerHTML = '<pre id="json">'+highlight(lastJson)+'</pre>';
+      $("#view-visual").innerHTML = renderVisual(ast, false);
+      $("#view-explain").innerHTML = explainSql(ast);
+    } catch (e){
+      const msg = (e && e.message) ? e.message : String(e);
+      const html = '<div class="error">⚠ 解析失败\n\n'+esc(msg)+'\n\n提示：请检查 SQL 语法，或在左上角切换方言（如 MySQL / PostgreSQL）。</div>';
+      $("#view-tree").innerHTML = html;
+      $("#view-json").innerHTML = html;
+      $("#view-visual").innerHTML = html;
+      $("#view-explain").innerHTML = html;
+      lastAst = null; lastJson = ""; lastRawAst = null;
+    }
+  }
+  function clearViews(){
+    ["#view-tree","#view-json","#view-visual","#view-explain"].forEach(s=>{
+      $(s).innerHTML = '<div class="empty">转换后在此查看结果。</div>';
+    });
+    lastAst = null; lastJson = ""; lastRawAst = null;
+  }
+
+  // ---------- 事件 ----------
+  dialectSel.addEventListener("change", ()=>{
+    $("#dialect-hint").textContent = "当前方言：" + (dialectSel.value==='auto'?'自动':dialectSel.value);
+    convert();
+  });
+  let timer;
+  sqlEl.addEventListener("input", ()=>{
+    $("#sql-stat").textContent = sqlEl.value.length + " 字符";
+    updateInputHighlight();
+    clearTimeout(timer); timer = setTimeout(convert, 350);
+  });
+  // 滚动同步：textarea 滚动时让背后高亮层跟随
+  sqlEl.addEventListener("scroll", ()=>{ sqlHl.scrollTop = sqlEl.scrollTop; sqlHl.scrollLeft = sqlEl.scrollLeft; });
+  $("#btn-convert").addEventListener("click", convert);
+  $("#btn-clear").addEventListener("click", ()=>{ sqlEl.value=""; $("#sql-stat").textContent="0 字符"; updateInputHighlight(); clearViews(); sqlEl.focus(); });
+  $("#btn-format").addEventListener("click", ()=>{
+    const sql = sqlEl.value.trim();
+    if (!sql) return;
+    const opt = {}; if (dialectSel.value !== 'auto') opt.database = dialectSel.value;
+    try { const ast = parser.astify(sql, opt); sqlEl.value = parser.sqlify(ast); updateInputHighlight(); convert(); toast("已格式化"); }
+    catch(e){ toast("格式化失败：" + (e.message||e)); }
+  });
+  $("#btn-copy").addEventListener("click", async ()=>{
+    if (!lastJson){ toast("暂无可复制的内容"); return; }
+    try { await navigator.clipboard.writeText(lastJson); toast("已复制 JSON 到剪贴板"); }
+    catch(e){
+      const ta=document.createElement("textarea"); ta.value=lastJson; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand("copy"); toast("已复制 JSON"); }catch(_){ toast("复制失败"); }
+      document.body.removeChild(ta);
+    }
+  });
+  function downloadJson(filename){
+    if (!lastJson){ toast("暂无可下载的内容"); return; }
+    const blob = new Blob([lastJson], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename || "sql-ast.json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast("已下载 " + (filename || "sql-ast.json"));
+  }
+  $("#btn-download").addEventListener("click", ()=> downloadJson("sql-ast.json"));
+  function downloadStructure(){
+    if (!lastAst){ toast("暂无可下载的内容"); return; }
+    const text = JSON.stringify(deepParse(lastAst), null, 2);
+    const blob = new Blob([text], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sql-structure.json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast("已下载 sql-structure.json（已解析嵌套 JSON）");
+  }
+  $("#btn-download-structure").addEventListener("click", downloadStructure);
+  $("#btn-expand").addEventListener("click", ()=>{
+    const active = document.querySelector(".view.active");
+    if (!active) return;
+    const branches = active.querySelectorAll(".branch");
+    if (!branches.length){ toast("当前视图无可折叠节点"); return; }
+    const anyOpen = [...branches].some(b=>!b.classList.contains("collapsed"));
+    branches.forEach(b=> b.classList.toggle("collapsed", anyOpen));
+    toast(anyOpen ? "已收起全部节点" : "已展开全部节点");
+  });
+
+  // 树折叠交互（仅点击三角 ▾ 触发，事件委托覆盖树形视图与可视化内嵌 JSON）
+  document.addEventListener("click", (e)=>{
+    const t = e.target.closest(".toggle");
+    if (!t) return;
+    const branch = t.closest(".branch");
+    if (branch) branch.classList.toggle("collapsed");
+  });
+  // 复制节点 JSON：点击节点标签（含叶子）复制该节点及其全部子节点的 JSON 文本；与折叠三角互不干扰
+  document.addEventListener("click", (e)=>{
+    if (e.target.closest(".toggle")) return;        // 点到三角不复制
+    const labelEl = e.target.closest(".branch-label, .leaf");
+    if (!labelEl) return;
+    const node = labelEl.closest("[data-node]");
+    if (!node) return;
+    const id = node.getAttribute("data-node");
+    if (id === null || id === undefined) return;
+    const val = nodeStore[Number(id)];
+    copyNodeJson(val);
+  });
+
+  // Tab 切换
+  document.querySelectorAll(".tab").forEach(tab=>{
+    tab.addEventListener("click", ()=>{
+      document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+      document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+      tab.classList.add("active");
+      $("#view-"+tab.dataset.view).classList.add("active");
+    });
+  });
+
+  // ---------- 示例 ----------
+  const SAMPLES = {
+    "简单查询": "SELECT id, name, age\nFROM users\nWHERE age > 18\nORDER BY name ASC\nLIMIT 10;",
+    "多表 JOIN": "SELECT u.id, u.name, o.order_no, o.amount\nFROM users u\nINNER JOIN orders o ON u.id = o.user_id\nLEFT JOIN coupons c ON o.id = c.order_id\nWHERE u.status = 'active'\n  AND (o.amount > 100 OR c.discount IS NOT NULL)\nORDER BY o.amount DESC;",
+    "聚合分组": "SELECT department, COUNT(*) AS cnt, AVG(salary) AS avg_sal\nFROM employees\nWHERE hire_date >= '2020-01-01'\nGROUP BY department\nHAVING COUNT(*) > 5\nORDER BY avg_sal DESC;",
+    "子查询": "SELECT name, salary\nFROM employees\nWHERE salary > (\n  SELECT AVG(salary) FROM employees\n)\nAND department_id IN (\n  SELECT id FROM departments WHERE region = 'APAC'\n);",
+    "INSERT": "INSERT INTO logs (user_id, action, created_at)\nVALUES (1024, 'login', NOW());",
+    "UPDATE": "UPDATE products\nSET price = price * 0.9, updated_at = NOW()\nWHERE category = 'books'\n  AND stock > 0;",
+    "INSERT(含JSON字段)": "INSERT INTO data_source (name, type, config, schema_info, status)\nVALUES (\n  'queryBehaviorLog',\n  'api',\n  '{\"base_url\": \"https://antispam.devops.xiaohongshu.com\", \"auth_type\": \"cookie\"}',\n  '[{\"desc\": \"用户 id，必填\", \"type\": \"string\", \"field\": \"userId\", \"required\": true, \"direction\": \"input\"}, {\"desc\": \"风险等级列表\", \"type\": \"list\", \"field\": \"riskLevels\", \"required\": false, \"direction\": \"input\"}]',\n  '1'\n);",
+    "INSERT(完整示例)": `INSERT INTO \`data_source\` (name, type, config, schema_info, description, notes, extra, status, created_by, updated_by, created_at, updated_at) VALUES ('queryBehaviorLog','api','{"base_url": "https://antispam.devops.xiaohongshu.com", "auth_type": "cookie"}','[{"desc": "用户 id，必填", "type": "string", "field": "userId", "required": true, "direction": "input"}, {"desc": "风险等级列表，可选，多个用英文逗号分隔（如 PASS，REVIEW，REJECT）", "type": "list", "field": "riskLevels", "required": false, "direction": "input"}, {"desc": "场景列表，可选，多个用英文逗号分隔", "type": "list", "field": "scenarios", "required": false, "direction": "input"}, {"desc": "开始毫秒时间戳，必填，须与 endTime 成对传入", "type": "long", "field": "startTime", "required": true, "direction": "input"}, {"desc": "结束毫秒时间戳，必填，不能早于 startTime", "type": "long", "field": "endTime", "required": true, "direction": "input"}, {"desc": "取最近 N 条，可选，默认 200，上限 1000", "type": "int", "field": "limit", "required": false, "direction": "input"}, {"desc": "业务响应数据", "type": "object", "field": "data", "direction": "output"}, {"desc": "查询的用户 id", "type": "string", "field": "data.userId", "direction": "output"}, {"desc": "命中记录总数", "type": "int", "field": "data.total", "direction": "output"}, {"desc": "行为记录明细列表（按发生时间倒序）", "type": "array<struct>", "field": "data.behaviors", "direction": "output"}, {"desc": "风险事件唯一标识", "type": "string", "field": "data.behaviors[].riskUuid", "direction": "output"}, {"desc": "场景标识", "type": "string", "field": "data.behaviors[].scenario", "direction": "output"}, {"desc": "场景描述", "type": "string", "field": "data.behaviors[].scenarioDesc", "direction": "output"}, {"desc": "用户 id", "type": "string", "field": "data.behaviors[].userId", "direction": "output"}, {"desc": "行为发生时间（yyyy-MM-dd HH:mm:ss）", "type": "string", "field": "data.behaviors[].happenTime", "direction": "output"}, {"desc": "设备 id", "type": "string", "field": "data.behaviors[].deviceId", "direction": "output"}, {"desc": "设备名称", "type": "string", "field": "data.behaviors[].deviceName", "direction": "output"}, {"desc": "IP 地址", "type": "string", "field": "data.behaviors[].ip", "direction": "output"}, {"desc": "风险等级", "type": "string", "field": "data.behaviors[].riskLevel", "direction": "output"}, {"desc": "IP 归属国家", "type": "string", "field": "data.behaviors[].ipCountry", "direction": "output"}, {"desc": "IP 归属省份", "type": "string", "field": "data.behaviors[].ipProvince", "direction": "output"}, {"desc": "IP 归属城市", "type": "string", "field": "data.behaviors[].ipCity", "direction": "output"}, {"desc": "客户端版本号", "type": "string", "field": "data.behaviors[].build", "direction": "output"}, {"desc": "绑定类型", "type": "string", "field": "data.behaviors[].bindType", "direction": "output"}, {"desc": "绑定原因", "type": "string", "field": "data.behaviors[].bindReason", "direction": "output"}, {"desc": "平台", "type": "string", "field": "data.behaviors[].platform", "direction": "output"}, {"desc": "处罚 id，仅新集群记录有值，可能为单值或逗号分隔多值", "type": "string", "field": "data.behaviors[].punishId", "direction": "output"}, {"desc": "处罚 id 到处罚描述的映射，无处罚或旧集群记录为空", "type": "map", "field": "data.behaviors[].punishDescription", "direction": "output"}, {"desc": "命中规则列表", "type": "array<map>", "field": "data.behaviors[].hitRules", "direction": "output"}, {"desc": "额外数据", "type": "map", "field": "data.behaviors[].extraData", "direction": "output"}, {"desc": "额外字段（手机号等敏感字段已脱敏）", "type": "map", "field": "data.behaviors[].extraFields", "direction": "output"}, {"desc": "提示信息，失败时非空", "type": "string", "field": "message", "direction": "output"}, {"desc": "状态码，200 表示成功", "type": "int", "field": "code", "direction": "output"}, {"desc": "是否成功", "type": "boolean", "field": "success", "direction": "output"}]','查询指定用户在时间区间内的风险行为记录（供 dify 调用），支持按风险等级、场景过滤，自动路由新旧集群并按发生时间倒序取最近 N 条','startTime/endTime 为毫秒时间戳且必须成对传入，startTime 不能晚于 endTime；limit 未传默认 200、超过 1000 按 1000 截断；查询异常会降级返回空 behaviors 而非报错','{"method": "GET", "endpoint": "/riskmodelcontext/behaviorlog/query"}','1','chenjingru101@xiaohongshu.com','chenjingru101@xiaohongshu.com','2026-07-30 11:43:55','2026-07-30 11:43:55')`,
+    "纯 JSON 对象": "{\n  \"name\": \"queryBehaviorLog\",\n  \"type\": \"api\",\n  \"config\": \"{\\\"base_url\\\": \\\"https://antispam.devops.xiaohongshu.com\\\", \\\"auth_type\\\": \\\"cookie\\\"}\",\n  \"schema_info\": \"[{\\\"field\\\": \\\"userId\\\", \\\"type\\\": \\\"string\\\", \\\"required\\\": true}, {\\\"field\\\": \\\"riskLevels\\\", \\\"type\\\": \\\"list\\\"}]\",\n  \"status\": \"1\"\n}",
+    "JSON 数组(元素含JSON)": "[\n  \"{\\\"id\\\": 1, \\\"name\\\": \\\"a\\\"}\",\n  \"{\\\"id\\\": 2, \\\"name\\\": \\\"b\\\"}\",\n  \"plain-string\",\n  {\"nested\": \"{\\\"deep\\\": true}\"}\n]"
+  };
+  Object.keys(SAMPLES).forEach(k=>{
+    const o = document.createElement("option"); o.value = k; o.textContent = k; sampleSel.appendChild(o);
+  });
+  sampleSel.addEventListener("change", ()=>{
+    const v = sampleSel.value;
+    if (v && SAMPLES[v]){ sqlEl.value = SAMPLES[v]; $("#sql-stat").textContent = sqlEl.value.length + " 字符"; updateInputHighlight(); convert(); }
+    sampleSel.value = "";
+  });
+
+  // 初始化
+  sqlEl.value = SAMPLES["多表 JOIN"];
+  $("#sql-stat").textContent = sqlEl.value.length + " 字符";
+  updateInputHighlight();
+  convert();
+})();
+</script>
+</body>
+</html>
